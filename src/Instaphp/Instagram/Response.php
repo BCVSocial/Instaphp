@@ -27,7 +27,7 @@
  */
 
 namespace Instaphp\Instagram;
-use GuzzleHttp\Message\Response as GuzzleResponse;
+use GuzzleHttp\Psr7\Response as BaseResponse;
 /**
  * A generic objec representing a response from the Instagram API
  *
@@ -41,12 +41,12 @@ class Response
 	/**
 	 * The HTTP header in the response that holds the rate limit for this request
 	 */
-	const RATE_LIMIT_HEADER = 'x-ratelimit-limit';
+	const RATE_LIMIT_HEADER = 'X-Ratelimit-Limit';
 
 	/**
 	 * The HTTP header in the response that holds the rate limit remaingin
 	 */
-	const RATE_LIMIT_REMAINING_HEADER = 'x-ratelimit-remaining';
+	const RATE_LIMIT_REMAINING_HEADER = 'X-Ratelimit-Remaining';
 
 	/** @var string The request url */
 	public $url = '';
@@ -84,7 +84,7 @@ class Response
 	/** @var int The number of requests you have remaining for this client/access_token */
 	public $remaining = 0;
 
-	public function __construct(GuzzleResponse $response)
+	public function __construct(BaseResponse $response,$effectiveUri = '')
 	{
 		$headers = $response->getHeaders();
         //-- this is a hack on my part and I'm terribly sorry it exists
@@ -92,7 +92,7 @@ class Response
         foreach ($headers as $header => $value)
             $this->headers[$header] = implode(',', array_values((array)$value));
 
-		$this->url = $response->getEffectiveUrl();
+		$this->url = $effectiveUri;
 
 		// set the query params in $this->params
 		$query = parse_url($this->url, PHP_URL_QUERY);
@@ -101,8 +101,7 @@ class Response
 		// $this->params = $response->request_parameters;
 		// $this->method = $response->request_method;
 
-		$this->json = $response->json();
-		// $json = json_decode($this->json, TRUE);
+		$this->json = json_decode($response->getBody(), TRUE);
 		$this->data = isset($this->json['data']) ? $this->json['data'] : [];
 		$this->meta = isset($this->json['meta']) ? $this->json['meta'] : [];
 		if (isset($this->json['code']) && $this->json['code'] !== 200)

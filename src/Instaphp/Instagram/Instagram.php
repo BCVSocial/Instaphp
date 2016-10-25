@@ -28,7 +28,6 @@
 
 namespace Instaphp\Instagram;
 
-use GuzzleHttp\Exception\ParseException;
 use GuzzleHttp\Exception\RequestException;
 use Instaphp\Exceptions\Exception as InstaphpException;
 use GuzzleHttp\Client;
@@ -38,8 +37,11 @@ use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use GuzzleHttp\Event\BeforeEvent;
 use GuzzleHttp\Event\CompleteEvent;
-use GuzzleHttp\Event\ErrorEvent;
-use GuzzleHttp\Message\Response;
+use GuzzleHttp\Psr7\Response;
+use GuzzleHttp\Middleware;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use GuzzleHttp\HandlerStack;
 use Instaphp\Http\Events\InstagramSignedAuthEvent;
 /**
  * The base Instagram API object.
@@ -87,60 +89,70 @@ class Instagram
 		$this->config = $config;
 		$this->client_id = $this->config['client_id'];
 		$this->client_secret = $this->config['client_secret'];
-        $this->access_token = $this->config['access_token'];
-        $this->client_ip = $this->config['client_ip'];
-        $this->http = new Client([
-            'base_url' => 'https://api.instagram.com',
-            'defaults' => [
-                'timeout' => $this->config['http_timeout'],
-                'connect_timeout' => $this->config['http_connect_timeout'],
-                'headers' => [ 'User-Agent' => $this->config['http_useragent'] ],
-                'verify' => $config['verify'],
-                'exceptions' => false
-            ]
-        ]);
-        $emitter = $this->http->getEmitter();
+                $this->access_token = $this->config['access_token'];
+                $this->client_ip = $this->config['client_ip'];
 
-        if (!empty($this->config['event.before']) && is_callable($this->config['event.before'])) {
-        	$emitter->on('before', function(BeforeEvent $e) use($config) {
-        		call_user_func_array($config['event.before'], [$e]);
-        	});
-        } elseif ($this->config['log_enabled']) {
-			$emitter->on('before', function(BeforeEvent $e) use($config) {
-				call_user_func_array([$this, 'onBefore'], [$e]);
-			});
-		}
+                /* @var $stack HandlerStack */
+                $stack = HandlerStack::create();
 
-        if (!empty($this->config['event.after']) && is_callable($this->config['event.after'])) {
-        	$emitter->on('complete', function(CompleteEvent $e) use ($config) {
-        		call_user_func_array($config['event.after'], [$e]);
-        	});
-        } elseif ($this->config['log_enabled']) {
-			$emitter->on('complete', function(CompleteEvent $e) use($config) {
-				call_user_func_array([$this, 'onComplete'], [$e]);
-			});
-		}
+                if (!empty($this->config['event.before']) && is_callable($this->config['event.before'])) {
+                        $stack->push(Middleware::mapRequest(function(RequestInterface $e) use ($config){
+                                call_user_func_array($config['event.before'], [$e]);
+                                return $e;
+                        }));
+                } elseif ($this->config['log_enabled']) {
+                        $stack->push(Middleware::mapRequest(function(RequestInterface $e){
+                                call_user_func_array([$this, 'onBefore'], [$e]);
+                                return $e;
+                        }));
+                }
 
-        if (!empty($this->config['event.error']) && is_callable($this->config['event.error'])) {
-        	$emitter->on('error', function(ErrorEvent $e) use ($config) {
-        		$e->stopPropagation();
-        		call_user_func_array($config['event.error'], [$e]);
-        	});
-        }
+                if (!empty($this->config['event.after']) && is_callable($this->config['event.after'])) {;
+                        $stack->push(Middleware::mapResponse(function(ResponseInterface $e) use ($config){
+                                call_user_func_array($config['event.after'], [$e]);
+                                return $e;
+                        }));
+                } elseif ($this->config['log_enabled']) {
+                        $stack->push(Middleware::mapResponse(function(ResponseInterface $e){
+                                call_user_func_array([$this, 'onComplete'], [$e]);
+                                return $e;
+                        }));
+                }
 
-        if ($this->config['log_enabled']) {
-			$this->log = new Logger('instaphp');
-			$this->log->pushHandler(new StreamHandler($this->config['log_path'], $this->config['log_level']));
-	        if ($this->config['debug']) {
-	        	$emitter->attach(new LogSubscriber($this->log, Formatter::DEBUG));
-	        } else {
-	        	$emitter->attach(new LogSubscriber($this->log));
-	        }
-	    }
-	    
-        $emitter->attach(new InstagramSignedAuthEvent($this->client_ip, $this->client_secret));
+//                if (!empty($this->config['event.error']) && is_callable($this->config['event.error'])) {
+//                        $stack->push(Middleware::mapResponse(function(ResponseInterface $e) use($config) {
+//                            if($e->getStatusCode())
+//                            {
+//                                    call_user_func_array($config['event.error'], [$e]);
+//                                    return $e;
+//                            }
+//                        }));
+//                }
 
+                if ($this->config['log_enabled']) {
+                            $this->log = new Logger('instaphp');
+                        //    $this->log->pushHandler(new StreamHandler($this->config['log_path'], $this->config['log_level']));
+//                    if ($this->config['debug']) {
+//                            $stack->push(new LogSubscriber($this->log, Formatter::DEBUG));
+//                    } else {
+//                            $stack->push(new LogSubscriber($this->log));
+//                    }
+                }
 
+                $instagramHandler = new InstagramSignedAuthEvent($this->client_ip, $this->client_secret);
+                $stack->push($instagramHandler->createMapRequest());
+                
+                $this->http = new Client([
+                    'base_uri' => 'https://api.instagram.com',
+                    'handler' => $stack,
+                    'defaults' => [
+                        'timeout' => $this->config['http_timeout'],
+                        'connect_timeout' => $this->config['http_connect_timeout'],
+                        'headers' => [ 'User-Agent' => $this->config['http_useragent'] ],
+                        'verify' => $config['verify'],
+                        'exceptions' => false
+                    ]
+                ]);
 	}
 
 	/**
@@ -215,7 +227,7 @@ class Instagram
 	 */
 	protected function post($path, array $params = [], array $headers = [])
 	{
-        $query = $this->prepare($params,false);
+        $query = $this->prepare($params);
         $response = new Response(500);
         try {
 			$response = $this->http->post($this->buildPath($path), [
@@ -261,11 +273,10 @@ class Instagram
 	/**
 	 * Simply prepares the parameters being passed. Automatically set the client_id
 	 * unless there is an access_token, in which case it is added instead
-	 * @param array $params The list of parameters to prepare for a request
-	 * @param bool $encode Whether the params should be urlencoded
+	 * @param array $params The list of parameters to perpare for a request
 	 * @return array The prepared parameters
 	 */
-	private function prepare(array $params, $encode = true)
+	private function prepare(array $params)
 	{
 		$params['client_id'] = $this->client_id;
 		if (!empty($this->access_token)) {
@@ -273,10 +284,8 @@ class Instagram
 			$params['access_token'] = $this->access_token;
 		}
 
-		if ($encode) {
-			foreach ($params as $k => $v) {
-				$params[$k] = urlencode($v);
-			}
+		foreach ($params as $k => $v) {
+			$params[$k] = urlencode($v);
 		}
 
 		return $params;
@@ -292,14 +301,11 @@ class Instagram
 	{
 		//$base = 'https://api.instagram.com';
 
-		$path = sprintf('/%s/', $path);
-		$path = preg_replace('/[\/]{2,}/', '/', $path);
+        $path = sprintf('/%s/', $path);
+        $path = preg_replace('/[\/]{2,}/', '/', $path);
 
 		if ($add_version && !preg_match('/^\/v1/', $path))
 			$path = '/v1' . $path;
-
-		// Some endpoints don't respond with a trailing slash
-		$path = rtrim($path, '/');
 
 		return $path;
 	}
@@ -323,7 +329,7 @@ class Instagram
 	 * for errors and throws the apropriate exception. If there's no errors,
 	 * this method returns the Instagram Response object.
 	 *
-	 * @param \GuzzelHttp\Message\Response $response
+	 * @param \GuzzleHttp\Psr7\Response $response
 	 * @return \Instaphp\Instagram\Response
 	 * @throws \Instaphp\Exceptions\OAuthParameterException
 	 * @throws \Instaphp\Exceptions\OAuthRateLimitException
@@ -337,11 +343,7 @@ class Instagram
 		if ($response == NULL)
 			throw new \Instaphp\Exceptions\Exception("Response object is NULL");
 
-        try {
-		    $igresponse = new \Instaphp\Instagram\Response($response);
-        } catch (ParseException $e) {
-            throw new \Instaphp\Exceptions\InvalidResponseFormatException($e->getMessage(), $e->getCode(), null, $e);
-        }
+		$igresponse = new \Instaphp\Instagram\Response($response);
 
 		//-- First check if there's an API error from the Instagram response
 		if (isset($igresponse->meta['error_type'])) {
@@ -353,9 +355,6 @@ class Instagram
 				case 'OAuthRateLimitException':
 					throw new \Instaphp\Exceptions\OAuthRateLimitException($igresponse->meta['error_message'], $igresponse->meta['code'], $igresponse);
 					break;
-				case 'OAuthAccessTokenException':
-					throw new \Instaphp\Exceptions\OAuthAccessTokenException($igresponse->meta['error_message'], $igresponse->meta['code'], $igresponse);
-					break;
 				case 'APINotFoundError':
 					throw new \Instaphp\Exceptions\APINotFoundError($igresponse->meta['error_message'], $igresponse->meta['code'], $igresponse);
 					break;
@@ -364,9 +363,6 @@ class Instagram
 					break;
 				case 'APIInvalidParametersError':
 					throw new \Instaphp\Exceptions\APIInvalidParametersError($igresponse->meta['error_message'], $igresponse->meta['code'], $igresponse);
-					break;
-				case 'APIAgeGatedError':
-					throw new \Instaphp\Exceptions\APIAgeGatedError($igresponse->meta['error_message'], $igresponse->meta['code'], $igresponse);
 					break;
 				default:
 					break;
@@ -394,19 +390,17 @@ class Instagram
 	/**
 	 * @param BeforeEvent $e
 	 */
-	public function onBefore(BeforeEvent $e)
+	public function onBefore(RequestInterface $e)
 	{
-		$request = $e->getRequest();
-		$this->log->debug(sprintf('Call URL: %s', $request->getUrl()));
+		$this->log->debug(sprintf('Call URL: %s', $e->getUri()));
 	}
 
 	/**
 	 * @param CompleteEvent $e
 	 */
-	public function onComplete(CompleteEvent $e)
+	public function onComplete(ResponseInterface $e)
 	{
-		$response = $e->getResponse();
-		$this->log->debug(sprintf('Response code %s: %s', $response->getStatusCode(), $response->getReasonPhrase()));
+		$this->log->debug(sprintf('Response code %s: %s', $e->getStatusCode(), $e->getReasonPhrase()));
 	}
 
 }

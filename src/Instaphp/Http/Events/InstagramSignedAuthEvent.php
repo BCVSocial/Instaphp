@@ -26,12 +26,12 @@
  */
 namespace Instaphp\Http\Events;
 
-use \GuzzleHttp\Event\BeforeEvent;
-use \GuzzleHttp\Event\RequestEvents;
+use GuzzleHttp\Middleware;
+use Psr\Http\Message\RequestInterface;
 /**
 * Instagram Signed Authentication Event Subscriber
 */
-class InstagramSignedAuthEvent implements \GuzzleHttp\Event\SubscriberInterface
+class InstagramSignedAuthEvent
 {
 	private $client_secret;
 	private $ip_address;
@@ -41,19 +41,24 @@ class InstagramSignedAuthEvent implements \GuzzleHttp\Event\SubscriberInterface
 		$this->client_secret = $client_secret;
 		$this->ip_address = $ip_address;
 	}
+        
+        /**
+         * 
+         * @return type
+         */
+        public function createMapRequest()
+        {
+            return Middleware::mapRequest(array($this,'sign'));
+        }
 
-	public function getEvents()
+	public function sign(RequestInterface $e)
 	{
-		return ['before' => ['sign', RequestEvents::SIGN_REQUEST]];
-	}
-
-	public function sign(BeforeEvent $e)
-	{
-		$method = $e->getRequest()->getMethod();
+		$method = $e->getMethod();
 
 		if (preg_match('/post|put|delete/i', $method)) {
-			$e->getRequest()->setHeader('X-Insta-Forwarded-For', join('|', array($this->ip_address, hash_hmac('SHA256', $this->ip_address, $this->client_secret))));
+			$e->withHeader('X-Insta-Forwarded-For', join('|', array($this->ip_address, hash_hmac('SHA256', $this->ip_address, $this->client_secret))));
 		}
+                return $e;
 		// var_dump($e->getRequest()->getHeaders());
 	}
 }

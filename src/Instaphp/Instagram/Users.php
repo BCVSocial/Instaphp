@@ -31,6 +31,7 @@ use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Message\Request;
 use Instaphp\Exceptions\InstagramException;
 use Instaphp\Exceptions\InstaphpException;
+use GuzzleHttp\TransferStats;
 
 /**
  * Users API
@@ -50,14 +51,18 @@ class Users extends Instagram
 	public function Authorize($code)
 	{
         try {
+            $effectiveUri = '';
             $response = $this->http->Post($this->buildPath('/oauth/access_token', false), [
-                'body' => [
+                'form_params' => [
                     'client_id' => $this->config['client_id'],
                     'client_secret' => $this->config['client_secret'],
                     'redirect_uri' => $this->config['redirect_uri'],
                     'grant_type' => 'authorization_code',
                     'code' => $code
-                    ]
+                    ],
+              'on_stats' => function (TransferStats $stats) use (&$effectiveUri) {
+                    $effectiveUri = $stats->getEffectiveUri();
+                }
             ]);
         } catch (RequestException $e) {
 			throw $e;
@@ -66,7 +71,7 @@ class Users extends Instagram
 			throw new InstaphpException($e->getMessage(), $e->getCode(), $e);
 		}
 		if ($response->getStatusCode() == 200) {
-			$res = new Response($response);
+			$res = new Response($response,$effectiveUri);
 			$this->SetAccessToken($res->access_token);
 			$this->user = $res->user;
 			return true;
@@ -106,7 +111,6 @@ class Users extends Instagram
 	}
 
 	/**
-	 * @deprecated
 	 * Gets the currently authenticated user's feed
 	 * @param array $params Parameters to pass to the API
 	 * @return \Instaphp\Instagram\Response

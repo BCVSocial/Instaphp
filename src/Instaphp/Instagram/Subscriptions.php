@@ -110,29 +110,28 @@ class Subscriptions extends Instagram
 	 * updated media by subscription.
 	 * 
 	 * @param string $data The body of the update POSTed to the callback_url
-	 * @param int $count (optional) number of returned objects
 	 * @return array Returns an array of {@link InstaResponse} objects
 	 */
-	public function Recieve($data,$count = 5)
+	public function Recieve($data)
 	{
 		$subs = json_decode($data, TRUE);
 		$responses = [];
 		foreach ($subs as $sub) {
 			switch ($sub['object']) {
 				case 'user':
-					$responses['user'][$sub['object_id']][] = $this->Get(sprintf('/users/%s/media/recent', $sub['object_id']), ["count" => $count, 'min_timestamp' => $sub['time']]);
+					$responses[] = $this->Get(sprintf('/users/%s/media/recent', $sub['object_id']), ["count" => 5, 'min_timestamp' => $sub['time']]);
 					break;
 				
 				case 'tag':
-					$responses['tag'][$sub['object_id']][] = $this->Get(sprintf('/tags/%s/media/recent', $sub['object_id']), ['count' => $count]);
+					$responses[] = $this->Get(sprintf('/tags/%s/media/recent', $sub['object_id']), ['count' => 5]);
 					break;
 				
 				case 'location':
-					$responses['location'][$sub['object_id']][] = $this->Get(sprintf('/locations/%s/media/recent', $sub['object_id']), ['count' => $count, 'min_timestamp' => $sub['time']]);
+					$responses[] = $this->Get(sprintf('/locations/%s/media/recent', $sub['object_id']), ['count' => 5, 'min_timestamp' => $sub['time']]);
 					break;
 				
 				case 'geography':
-					$responses['geography'][$sub['object_id']][] = $this->Get(sprintf('/geographies/%s/media/recent', $sub['object_id']), ['count' => $count]);
+					$responses[] = $this->Get(sprintf('/geographies/%s/media/recent', $sub['object_id']), ['count' => 5]);
 					break;
 				default: break;
 			}
